@@ -14,10 +14,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # NOTE: no darwin-x64 build — GitHub retired the last Intel macOS
+        # runner image (macos-13). Intel Macs auto-fall back to a source
+        # build in install.sh (git + bun/npm), so they stay supported.
         include:
           - { runs-on: ubuntu-latest, platform: linux, arch: x64 }
           - { runs-on: ubuntu-24.04-arm, platform: linux, arch: arm64 }
-          - { runs-on: macos-13, platform: darwin, arch: x64 }
           - { runs-on: macos-latest, platform: darwin, arch: arm64 }
     env:
       ECODE_OS: ${{ matrix.platform }}

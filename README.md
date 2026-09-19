@@ -31,7 +31,7 @@ Requirements: [Node.js](https://nodejs.org) 20+ and curl. That's it.
 curl -fsSL https://raw.githubusercontent.com/albytehq/ecode/main/install.sh | bash
 ```
 
-The installer downloads a prebuilt package for your platform (Linux/macOS, x64/arm64), installs it to `~/.ecode`, and puts `ecode` on your PATH. Your data — sessions, provider keys, settings, workspaces — lives in `~/.ecode` and survives every upgrade.
+The installer downloads a prebuilt package for your platform (Linux x64/arm64 · macOS arm64 — on an Intel Mac it builds from source automatically), installs it to `~/.ecode`, and puts `ecode` on your PATH. Your data — sessions, provider keys, settings, workspaces — lives in `~/.ecode` and survives every upgrade.
 
 Then, from any directory:
 
