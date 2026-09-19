@@ -97,7 +97,13 @@ if [ -z "$VERSION" ]; then
   fi
   if [ -z "$VERSION" ]; then
     step "${DIM}resolving the latest release…${R}"
-    VERSION="$(curl -fsSL "$API/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+    # redirect trick — no API call, no rate limit: github.com/<repo>/releases/latest
+    # 302s to .../tag/<tag>
+    VERSION="$(curl -fsSL -o /dev/null -w '%{url_effective}' "${GITHUB}/releases/latest" | sed -n 's#.*/tag/\(v[0-9][^/?]*\)$#\1#p')"
+    if [ -z "$VERSION" ]; then
+      # fallback to the API (rate-limited to 60/hr per IP)
+      VERSION="$(curl -fsSL "$API/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)"
+    fi
     [ -n "$VERSION" ] || die "could not resolve the latest release — pass one manually: install.sh --version v0.1.13"
   fi
 fi
