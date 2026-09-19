@@ -36,6 +36,14 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Prisma generate (fresh checkout has no generated client)
+        run: bunx prisma generate
+
+      - name: Fresh database (build-time SSG guard)
+        run: bunx prisma db push --skip-generate
+        env:
+          DATABASE_URL: "file:./ci.db"
+
       - name: Build the standalone server
         run: bun run build
         env:
