@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.13] — 2026-09-19
+
+The one-command install release.
+
+### Added
+- **One-line installer** — `curl -fsSL https://raw.githubusercontent.com/albytehq/ecode/main/install.sh | bash` downloads a prebuilt package (Linux/macOS, x64/arm64), installs to `~/.ecode`, symlinks `ecode` onto PATH, and verifies the install. Falls back to a source build (git + bun/npm) automatically when no prebuilt package exists for a platform.
+- **Release pipeline** — tagging `v*` builds four platform tarballs in CI (standalone server + sidecar prisma CLI) and attaches them (with SHA-256 checksums) to the GitHub release.
+- `ecode url` — prints the frontend URL, quiet and scriptable (exit 1 if the server is not running).
+- `ecode update [--version <tag>]` — re-runs the official installer from the CLI.
+- **Self-managing database** — first run seeds a pristine SQLite database; when the schema changes between versions, the CLI applies `prisma db push` upgrades automatically (non-destructive; user data is never silently dropped). User-supplied `ECODE_DATABASE_URL` is respected untouched.
+- The start banner now prints the frontend URL prominently and (with `--no-open` respected for the first time) opens the browser.
+
+### Changed
+- Installer-based installs keep all user data (sessions, keys, settings, workspaces) in `~/.ecode`, separate from the app directory, so upgrades never touch it.
+- README quick-start rewritten around the curl one-liner.
+
 ## [0.1.12] — 2026-09-19
 
 The bring-your-own-key release, with a ground-up interface redesign.

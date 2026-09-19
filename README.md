@@ -25,36 +25,40 @@ No built-in provider, no bundled tokens, no telemetry to us. You bring the keys;
 
 ## Install
 
-Requirements: [Node.js](https://nodejs.org) 20+ (or [Bun](https://bun.sh) 1.1+), a git clone, and one API key.
+Requirements: [Node.js](https://nodejs.org) 20+ and curl. That's it.
 
 ```bash
-git clone https://github.com/albytehq/ecode.git
-cd ecode
-
-# install dependencies (bun works too: bun install)
-npm install
-
-# create the local database
-npx prisma db push
-
-# build the standalone server
-npm run build
-
-# install the CLI onto your PATH (optional, global)
-npm link
+curl -fsSL https://raw.githubusercontent.com/albytehq/ecode/main/install.sh | bash
 ```
+
+The installer downloads a prebuilt package for your platform (Linux/macOS, x64/arm64), installs it to `~/.ecode`, and puts `ecode` on your PATH. Your data — sessions, provider keys, settings, workspaces — lives in `~/.ecode` and survives every upgrade.
 
 Then, from any directory:
 
 ```bash
-ecode              # opens the UI in your browser
+ecode              # starts the server, prints the frontend URL, opens your browser
 ecode ~/my-project # opens with that directory as the workspace
+ecode url          # prints the frontend URL (quiet, scriptable)
+ecode --no-open    # start without opening the browser
+ecode update       # update to the latest release
 ecode resume       # pick up a previous session
 ecode status       # server health from the terminal
 ecode stop         # stop the background server
 ```
 
-The first launch starts a local server and opens `http://localhost:3000`. Everything — sessions, keys, workspaces — lives in this repository checkout.
+No prebuilt package for your platform yet? The installer falls back to a source build automatically (needs git + bun or npm), or you can build manually:
+
+```bash
+git clone https://github.com/albytehq/ecode.git
+cd ecode
+npm install        # bun works too: bun install
+npm run build
+node bin/ecode.js  # same CLI, straight from the checkout
+```
+
+Uninstall: `rm -rf ~/.ecode ~/.local/bin/ecode`.
+
+On Windows, run the installer from WSL or Git Bash. The first launch starts a local server (default `http://localhost:4545`) and seeds its own SQLite database — nothing else to configure.
 
 ## Configure a provider
 

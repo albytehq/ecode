@@ -67,3 +67,6 @@ worklog.md
 Caddyfile
 .zscripts/
 mini-services/
+
+# release packaging output
+/dist/

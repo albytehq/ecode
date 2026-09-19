@@ -157,7 +157,7 @@ export function SettingsView({ open, onClose }: { open: boolean; onClose: () => 
             </button>
           ))}
           <div className="mt-auto px-2.5 py-1 font-mono text-[10px] leading-relaxed text-stone-600">
-            ecode v0.1.12
+            ecode v0.1.13
             <br />
             {catalog?.total ?? "…"} models live
           </div>
@@ -241,7 +241,7 @@ export function SettingsView({ open, onClose }: { open: boolean; onClose: () => 
                 </section>
 
                 <section className="space-y-2 rounded-md border border-stone-800 bg-stone-900/40 p-4 font-mono text-[11px] leading-relaxed text-stone-500">
-                  <div className="flex justify-between"><span>version</span><span className="text-stone-300">0.1.12</span></div>
+                  <div className="flex justify-between"><span>version</span><span className="text-stone-300">0.1.13</span></div>
                   <div className="flex justify-between"><span>catalog</span><span className="text-stone-300">{catalog?.total ?? "…"} models</span></div>
                   <div className="flex justify-between"><span>storage</span><span className="text-stone-300">local sqlite + localStorage</span></div>
                   <div className="flex justify-between"><span>keys</span><span className="text-stone-300">server-side, never sent to third parties</span></div>

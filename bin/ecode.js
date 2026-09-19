@@ -8,6 +8,8 @@
 //   ecode --think            start with thinking mode on
 //   ecode --ultrathink       start with maximum reasoning effort
 //   ecode resume [query]     pick a previous session to resume
+//   ecode url                print the frontend URL (exit 1 if not running)
+//   ecode update             update to the latest release
 //   ecode status             platform status card
 //   ecode stop               stop the Ecode server
 //   ecode help / --version
@@ -21,10 +23,11 @@ const http = require("http");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawn } = require("child_process");
+const crypto = require("crypto");
+const { spawn, spawnSync } = require("child_process");
 const readline = require("readline");
 
-const VERSION = "0.1.12";
+const VERSION = "0.1.13";
 const APP_ROOT = path.resolve(__dirname, "..");
 const ECODE_HOME = process.env.ECODE_HOME || path.join(os.homedir(), ".ecode");
 const PID_FILE = path.join(ECODE_HOME, "server.pid");
@@ -164,8 +167,10 @@ async function waitHealthy(port, ms) {
   return false;
 }
 
-// Turbopack+Prisma standalone workaround: built chunks require("@prisma/client-<hash>")
-// but node_modules only ships @prisma/client. Create the alias copy if missing.
+// Turbopack+Prisma standalone workaround (mirrors scripts/fix-prisma-alias.cjs):
+// built chunks require("@prisma/client-<hash>") but the traced node_modules only
+// ships @prisma/client. Ensure the hashed alias exists and no broken traced
+// copy shadows it from .next/node_modules.
 function fixPrismaAlias(standalone) {
   try {
     const prismaDir = path.join(standalone, "node_modules", "@prisma");
@@ -179,11 +184,43 @@ function fixPrismaAlias(standalone) {
     }
     const clientSrc = path.join(prismaDir, "client");
     if (!fs.existsSync(clientSrc)) return;
+    const isStub = () => {
+      try {
+        return JSON.parse(fs.readFileSync(path.join(clientSrc, "package.json"), "utf8")).version === "0.0.0-stub";
+      } catch {
+        return false;
+      }
+    };
     for (const hash of need) {
       const alias = path.join(prismaDir, `client-${hash}`);
       if (!fs.existsSync(alias)) {
+        if (isStub()) continue; // can't build the alias from a stub
         fs.cpSync(clientSrc, alias, { recursive: true });
         console.log(`  ${c.dim(`applied prisma standalone fix (client-${hash})`)}`);
+      }
+      // broken traced copy inside .next/node_modules shadows the alias — remove it
+      const inner = path.join(standalone, ".next", "node_modules", "@prisma", `client-${hash}`);
+      if (fs.existsSync(inner)) {
+        let main = null;
+        let hasExports = false;
+        let isInnerStub = false;
+        try {
+          const pkg = JSON.parse(fs.readFileSync(path.join(inner, "package.json"), "utf8"));
+          main = pkg.main || null;
+          hasExports = !!pkg.exports;
+          isInnerStub = pkg.version === "0.0.0-stub";
+        } catch {}
+        // a stub in the traced location is circular (forwards to itself) — always broken
+        if (isInnerStub || (!hasExports && (!main || !fs.existsSync(path.join(inner, main))))) {
+          fs.rmSync(inner, { recursive: true, force: true });
+          console.log(`  ${c.dim(`removed broken traced prisma copy (client-${hash})`)}`);
+        }
+      }
+      // repair stubs that predate the index.js entry fix
+      const entry = path.join(clientSrc, "index.js");
+      if (isStub() && !fs.existsSync(entry) && fs.existsSync(alias)) {
+        fs.writeFileSync(entry, `module.exports = require("@prisma/client-${hash}");\n`);
+        console.log(`  ${c.dim(`repaired prisma stub entry (client-${hash})`)}`);
       }
     }
   } catch {
@@ -193,8 +230,19 @@ function fixPrismaAlias(standalone) {
 
 async function ensureServer(port) {
   if (await healthy(port)) {
-    console.log(`  ${c.green("✓")} Ecode server ${c.dim(`already running on port ${port}`)}`);
-    return;
+    // already running — but if this CLI is newer than the running server
+    // (e.g. the user just ran `ecode update`), restart into the new version
+    let runningVersion = null;
+    try {
+      const r = await fetchJson(port, "/api/status");
+      runningVersion = r.json && r.json.version;
+    } catch {}
+    if (!runningVersion || runningVersion === VERSION) {
+      console.log(`  ${c.green("✓")} Ecode server ${c.dim(`already running on port ${port}`)}`);
+      return;
+    }
+    console.log(`  ${c.amber("!")} running server is v${runningVersion}, this install is v${VERSION} — restarting`);
+    await stopServer(port);
   }
 
   // stale/zombie process cleanup
@@ -216,6 +264,11 @@ async function ensureServer(port) {
 
   fs.mkdirSync(ECODE_HOME, { recursive: true });
 
+  // user-supplied ECODE_DATABASE_URL means they manage their own database
+  if (!process.env.ECODE_DATABASE_URL) {
+    ensureDb(path.join(ECODE_HOME, "db", "custom.db"));
+  }
+
   const env = {
     ...process.env,
     PORT: String(port),
@@ -228,20 +281,6 @@ async function ensureServer(port) {
     ECODE: "1",
   };
 
-  // first-run SQLite seed (tables already created)
-  const dbTarget = env.DATABASE_URL.replace(/^file:/, "");
-  if (!fs.existsSync(dbTarget)) {
-    fs.mkdirSync(path.dirname(dbTarget), { recursive: true });
-    for (const seed of [
-      path.join(APP_ROOT, "db-seed", "custom.db"),
-      path.join(APP_ROOT, "db", "custom.db"),
-    ]) {
-      if (fs.existsSync(seed)) {
-        fs.copyFileSync(seed, dbTarget);
-        break;
-      }
-    }
-  }
   fs.mkdirSync(env.ECODE_WORKSPACES_ROOT, { recursive: true });
 
   const standalone = path.join(APP_ROOT, ".next", "standalone", "server.js");
@@ -252,7 +291,12 @@ async function ensureServer(port) {
   if (fs.existsSync(standalone)) {
     console.log(`  ${c.dim("starting Ecode server")} ${c.dim(`(standalone, port ${port})`)}`);
     fixPrismaAlias(standalone);
-    child = spawn(process.execPath, [standalone], { env, detached: true, stdio: "ignore", cwd: path.dirname(standalone) });
+    child = spawn(process.execPath, [standalone], {
+      env,
+      detached: true,
+      stdio: ["ignore", fs.openSync(SERVER_LOG, "a"), fs.openSync(SERVER_LOG, "a")],
+      cwd: path.dirname(standalone),
+    });
     waitMs = 20000;
   } else if (fs.existsSync(nextBin)) {
     console.log(`  ${c.dim("no production build found — starting dev server")} ${c.amber("(first compile can take a minute)")}`);
@@ -279,6 +323,104 @@ async function ensureServer(port) {
     console.log("");
     die(
       `server did not become healthy in time.\n  Check the log: ${c.cyan(SERVER_LOG)}\n  Or run manually: ${c.cyan(`PORT=${port} node ${standalone}`)}`
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// database bootstrap — first run seeds SQLite, upgrades apply `prisma db push`
+// ---------------------------------------------------------------------------
+function findPrismaCli() {
+  const candidates = [
+    // prebuilt installs ship a sidecar prisma CLI (safe schema upgrades)
+    path.join(APP_ROOT, "prisma-cli", "node_modules", "prisma", "build", "index.js"),
+    // source checkouts have it in node_modules
+    path.join(APP_ROOT, "node_modules", "prisma", "build", "index.js"),
+  ];
+  for (const p of candidates) if (fs.existsSync(p)) return p;
+  return null;
+}
+
+function schemaStamp(schemaPath) {
+  try {
+    return crypto.createHash("sha256").update(fs.readFileSync(schemaPath)).digest("hex").slice(0, 16);
+  } catch {
+    return null;
+  }
+}
+
+function dbPush(prismaEntry, dbUrl, schemaPath) {
+  try {
+    const r = spawnSync(process.execPath, [prismaEntry, "db", "push", "--skip-generate", "--schema", schemaPath], {
+      env: { ...process.env, DATABASE_URL: dbUrl, PRISMA_HIDE_UPDATE_MESSAGE: "1" },
+      encoding: "utf8",
+      timeout: 120000,
+    });
+    if (r.status === 0) return { ok: true };
+    const tail = ((r.stderr || r.stdout || "").split("\n").filter(Boolean).slice(-3).join("\n") || "unknown prisma error").trim();
+    return { ok: false, why: tail };
+  } catch (e) {
+    return { ok: false, why: e.message };
+  }
+}
+
+function ensureDb(dbFile) {
+  const schemaPath = path.join(APP_ROOT, "prisma", "schema.prisma");
+  const dbUrl = `file:${dbFile}`;
+  fs.mkdirSync(path.dirname(dbFile), { recursive: true });
+
+  const stampFile = path.join(path.dirname(dbFile), ".schema-stamp");
+  const want = fs.existsSync(schemaPath) ? schemaStamp(schemaPath) : null;
+
+  // first run — no database yet
+  if (!fs.existsSync(dbFile)) {
+    const seed = path.join(APP_ROOT, "db-seed", "custom.db");
+    const prisma = findPrismaCli();
+    if (fs.existsSync(seed)) {
+      fs.copyFileSync(seed, dbFile);
+      console.log(`  ${c.green("✓")} database initialized ${c.dim(`(${dbFile})`)}`);
+    } else if (prisma) {
+      console.log(`  ${c.dim("creating the database")}`);
+      const r = dbPush(prisma, dbUrl, schemaPath);
+      if (!r.ok) {
+        die(`could not create the database:\n  ${r.why}\n  schema: ${schemaPath}`);
+      }
+      console.log(`  ${c.green("✓")} database initialized ${c.dim(`(${dbFile})`)}`);
+    } else if (fs.existsSync(schemaPath)) {
+      die(
+        `no database at ${dbFile} and no way to create one.\n  This install looks incomplete — re-run the installer:\n  ${c.cyan("curl -fsSL https://raw.githubusercontent.com/albytehq/ecode/main/install.sh | bash")}`
+      );
+    } else {
+      return; // dev checkout without schema — assume the caller handles it
+    }
+    if (want) fs.writeFileSync(stampFile, want, "utf8");
+    return;
+  }
+
+  // existing database — apply schema upgrades when prisma/schema.prisma changed
+  if (!want) return;
+  let have = null;
+  try {
+    have = fs.readFileSync(stampFile, "utf8").trim();
+  } catch {}
+  if (have === want) return;
+
+  const prisma = findPrismaCli();
+  if (!prisma) {
+    console.log(`  ${c.amber("!")} database schema changed but no prisma CLI is bundled — continuing with the current database`);
+    return;
+  }
+  console.log(`  ${c.dim("database schema changed — applying upgrade")}`);
+  const r = dbPush(prisma, dbUrl, schemaPath);
+  if (r.ok) {
+    fs.writeFileSync(stampFile, want, "utf8");
+    console.log(`  ${c.green("✓")} database schema up to date`);
+  } else {
+    console.log(
+      `  ${c.amber("!")} could not upgrade the database schema automatically:\n  ${r.why}`
+    );
+    console.log(
+      `  ${c.dim("your data was kept as-is. If anything misbehaves, back it up and re-init:")}\n  ${c.dim(`mv ${path.dirname(dbFile)} ${path.dirname(dbFile)}.bak`)}`
     );
   }
 }
@@ -327,11 +469,18 @@ function openBrowser(url) {
   return false;
 }
 
-const launch = (port, url) => {
-  console.log(`  ${c.green("→")} ${c.bold(url)}`);
-  if (!openBrowser(url)) {
+const launch = (port, url, open = true) => {
+  console.log("");
+  console.log(`  ${c.green("⚡")} Ecode is ${c.bold("ready")} ${c.dim(`— frontend:`)}`);
+  console.log("");
+  console.log(`      ${c.bold(url)}`);
+  console.log("");
+  if (open && openBrowser(url)) {
+    console.log(`  ${c.dim("opening it in your browser… (stop the server with")} ${c.bold("ecode stop")}${c.dim(")")}`);
+  } else {
     console.log(`  ${c.dim("open the URL above in your browser to start")}`);
   }
+  console.log("");
 };
 
 // ---------------------------------------------------------------------------
@@ -357,8 +506,7 @@ async function cmdOpen(flags, positional) {
     console.log(`  ${c.dim("workspace")} ${abs}`);
   }
   if (flags.plan) url += "&mode=plan";
-  launch(port, url);
-  console.log("");
+  launch(port, url, flags.open);
 }
 
 async function cmdResume(flags, positional) {
@@ -369,7 +517,7 @@ async function cmdResume(flags, positional) {
   const sessions = (res && res.json && res.json.sessions) || [];
   if (sessions.length === 0) {
     console.log(`  ${c.dim("no sessions yet — starting a fresh one")}`);
-    launch(port, `http://localhost:${port}/?from=cli`);
+    launch(port, `http://localhost:${port}/?from=cli`, flags.open);
     return;
   }
 
@@ -380,7 +528,7 @@ async function cmdResume(flags, positional) {
       (s) => s.title.toLowerCase().includes(query) || s.id.toLowerCase().includes(query)
     );
     if (list.length === 1) {
-      launch(port, `http://localhost:${port}/?session=${list[0].id}&from=cli`);
+      launch(port, `http://localhost:${port}/?session=${list[0].id}&from=cli`, flags.open);
       console.log(`  ${c.green("→")} resuming ${c.bold(list[0].title)}`);
       return;
     }
@@ -425,7 +573,7 @@ async function cmdResume(flags, positional) {
     return;
   }
   const chosen = list[(Number(ans) || 1) - 1];
-  launch(port, `http://localhost:${port}/?session=${chosen.id}&from=cli`);
+  launch(port, `http://localhost:${port}/?session=${chosen.id}&from=cli`, flags.open);
   console.log(`  ${c.green("→")} resuming ${c.bold(chosen.title)}`);
   console.log("");
 }
@@ -456,6 +604,32 @@ async function cmdStatus(flags) {
   console.log("");
 }
 
+async function cmdUrl(flags) {
+  const port = flags.port;
+  if (await healthy(port)) {
+    console.log(`http://localhost:${port}/`);
+    return;
+  }
+  die(`Ecode is not running on port ${port}\n  start it with: ${c.cyan("ecode")}`);
+}
+
+async function cmdUpdate(rest) {
+  const installUrl = "https://raw.githubusercontent.com/albytehq/ecode/main/install.sh";
+  console.log(`  ${c.dim("updating Ecode — running the official installer")}`);
+  console.log("");
+  const passthrough = rest.map((r) => `'${r.replace(/'/g, "'\\''")}'`).join(" ");
+  const r = spawnSync("bash", ["-c", `curl -fsSL ${installUrl} | bash -s -- ${passthrough}`], {
+    stdio: "inherit",
+  });
+  if (r.error) {
+    if (r.error.code === "ENOENT") {
+      die("bash + curl are required for updates — re-run the installer manually:\n  curl -fsSL https://raw.githubusercontent.com/albytehq/ecode/main/install.sh | bash");
+    }
+    die(r.error.message);
+  }
+  process.exit(r.status ?? 0);
+}
+
 function cmdHelp() {
   banner();
   console.log(`  ${c.bold("Usage")}`);
@@ -464,6 +638,8 @@ function cmdHelp() {
   console.log(`    ecode .                   use the current directory as the workspace`);
   console.log("");
   console.log(`  ${c.bold("Commands")}`);
+  console.log(`    url                       print the frontend URL (quiet, scriptable)`);
+  console.log(`    update [--version <tag>]  update to the latest (or a specific) release`);
   console.log(`    resume [query]            resume a previous session (interactive picker)`);
   console.log(`    status                    platform status card`);
   console.log(`    stop                      stop the Ecode server`);
@@ -478,6 +654,7 @@ function cmdHelp() {
   console.log(`    --port <n>                port (default ${DEFAULT_PORT} or $ECODE_PORT)`);
   console.log(`    --no-open                 don't open the browser automatically`);
   console.log("");
+  console.log(`  ${c.dim("install / update: curl -fsSL https://raw.githubusercontent.com/albytehq/ecode/main/install.sh | bash")}`);
   console.log(`  ${c.dim(`state lives in ${ECODE_HOME}`)}`);
   console.log("");
 }
@@ -516,6 +693,17 @@ function cmdHelp() {
   if (command === "resume") {
     banner();
     await cmdResume(flags, rest);
+    return;
+  }
+
+  if (command === "url") {
+    await cmdUrl(flags);
+    return;
+  }
+
+  if (command === "update") {
+    banner();
+    await cmdUpdate(rest);
     return;
   }
 

@@ -5,7 +5,7 @@
 // Workspace root — overridable for the Ecode CLI distribution (defaults to this app instance)
 export const WORKSPACES_ROOT = process.env.ECODE_WORKSPACES_ROOT ?? "/home/z/my-project/workspaces";
 
-export const ECODE_VERSION = "0.1.12";
+export const ECODE_VERSION = "0.1.13";
 
 export interface ModelInfo {
   id: string;

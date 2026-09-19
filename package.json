@@ -1,6 +1,6 @@
 {
   "name": "ecode",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Local-first AI coding agent \u2014 450+ models via OpenRouter, plan mode, visible reasoning, sandboxed tools, approval gates, diffs with undo. Bring your own keys.",
   "license": "MIT",
   "bin": {

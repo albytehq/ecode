@@ -50,7 +50,7 @@ export function EmptyChat() {
             What are we building?
           </h1>
           <p className="font-mono text-[11px] text-stone-500">
-            ecode v0.1.12 · {catalog?.total ?? "450+"} models live · {openrouterKeyed ? "openrouter connected" : "add a key in settings to start"}
+            ecode v0.1.13 · {catalog?.total ?? "450+"} models live · {openrouterKeyed ? "openrouter connected" : "add a key in settings to start"}
           </p>
         </div>
 

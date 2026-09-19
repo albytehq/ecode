@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    name: build ${{ matrix.platform }}-${{ matrix.arch }}
+    runs-on: ${{ matrix.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runs-on: ubuntu-latest, platform: linux, arch: x64 }
+          - { runs-on: ubuntu-24.04-arm, platform: linux, arch: arm64 }
+          - { runs-on: macos-13, platform: darwin, arch: x64 }
+          - { runs-on: macos-latest, platform: darwin, arch: arm64 }
+    env:
+      ECODE_OS: ${{ matrix.platform }}
+      ECODE_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build the standalone server
+        run: bun run build
+        env:
+          DATABASE_URL: "file:./ci.db"
+
+      - name: Package the release tarball
+        run: bash scripts/make-release-tarball.sh
+
+      - name: Upload to the release
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          gh release create "$TAG" --title "Ecode $TAG" --generate-notes --latest >/dev/null 2>&1 || echo "release already exists"
+          gh release upload "$TAG" dist/*.tar.gz dist/*.sha256 --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

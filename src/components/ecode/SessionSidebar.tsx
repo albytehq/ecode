@@ -59,7 +59,7 @@ export function SessionSidebar({ onOpenSettings }: { onOpenSettings: () => void 
           <button onClick={goHome} className="font-mono text-[13px] font-semibold tracking-tight text-stone-100 hover:text-[var(--hi)]" title="Home">
             ecode
           </button>
-          <span className="font-mono text-[10px] text-stone-600">v0.1.12</span>
+          <span className="font-mono text-[10px] text-stone-600">v0.1.13</span>
           <button
             onClick={toggleSidebar}
             className="ml-auto flex h-6 w-6 items-center justify-center rounded text-stone-500 hover:bg-stone-900 hover:text-stone-300"
