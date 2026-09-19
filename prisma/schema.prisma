@@ -1,0 +1,120 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model AppSetting {
+  key   String @id
+  value String // JSON-encoded value
+}
+
+model Session {
+  id               String      @id @default(cuid())
+  title            String      @default("New session")
+  provider         String      @default("openrouter")
+  model            String      @default("openrouter/auto")
+  mode             String      @default("manual") // manual | auto | yolo
+  agentMode        String      @default("build") // build | plan
+  thinking         String      @default("off") // off | think | ultrathink
+  status           String      @default("active") // active | ended
+  workspace        String
+  contextLimit     Int         @default(131072)
+  promptTokens     Int         @default(0)
+  completionTokens Int         @default(0)
+  totalTokens      Int         @default(0)
+  estCost          Float       @default(0)
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  messages         Message[]
+  changesets       Changeset[]
+  approvals        Approval[]
+  questions        UserQuestion[]
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  role        String // user | assistant | tool
+  content     String
+  reasoning   String? // thinking-mode chain of thought (kept separate from answer)
+  toolName    String?
+  toolStatus  String? // pending | success | error | denied | answered
+  toolArgs    String? // JSON string
+  toolResult  String?
+  tokens      Int      @default(0)
+  latencyMs   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  @@index([sessionId, createdAt])
+}
+
+model Changeset {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  filePath    String
+  action      String   @default("write") // write | delete | undo | redo
+  diff        String
+  oldContent  String?
+  newContent  String?
+  status      String   @default("applied") // applied | undone
+  createdAt   DateTime @default(now())
+}
+
+model Approval {
+  id         String    @id @default(cuid())
+  sessionId  String
+  session    Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  messageId  String?
+  toolName   String
+  args       String // JSON
+  status     String    @default("pending") // pending | approved | denied
+  createdAt  DateTime  @default(now())
+  decidedAt  DateTime?
+}
+
+model UserQuestion {
+  id         String    @id @default(cuid())
+  sessionId  String
+  session    Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  messageId  String?
+  question   String // JSON: { question, options: [{ label, description? }], allowFreeText }
+  answer     String? // JSON: { selected?: string, text?: string }
+  status     String    @default("pending") // pending | answered
+  createdAt  DateTime  @default(now())
+  answeredAt DateTime?
+}
+
+model AuditLog {
+  id                String   @id @default(cuid())
+  sessionId         String?
+  event             String // model_request | tool_call | diff_apply | approval | yolo_toggle | context_compaction | session_start | session_end
+  provider          String?
+  model             String?
+  promptTokens      Int?
+  completionTokens  Int?
+  totalTokens       Int?
+  latencyMs         Int?
+  status            String // success | error
+  errorCode         String?
+  userAction        String?
+  detail            String? // JSON
+  createdAt         DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+model ProviderConfig {
+  id        String   @id @default(cuid())
+  provider  String   @unique
+  apiKey    String
+  baseUrl   String?
+  active    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
